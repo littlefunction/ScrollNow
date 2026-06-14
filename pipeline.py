@@ -5,17 +5,19 @@ from typing import List, Tuple, Dict
 from pathlib import Path
 import datetime
 
+# --- Phase2.5+: NHK RSS（Yahoo!ニュース代替） ---
 RSS_FEEDS = {
-    "社会": "https://news.yahoo.co.jp/rss/topics/domestic.xml",
-    "国際": "https://news.yahoo.co.jp/rss/topics/world.xml",
-    "経済": "https://news.yahoo.co.jp/rss/topics/business.xml",
-    "テクノロジー": "https://news.yahoo.co.jp/rss/topics/it.xml",
-    "スポーツ": "https://news.yahoo.co.jp/rss/topics/sports.xml",
-    "エンタメ": "https://news.yahoo.co.jp/rss/topics/entertainment.xml",
+    "社会": "https://www.nhk.or.jp/rss/news/cat1.xml",
+    "国際": "https://www.nhk.or.jp/rss/news/cat2.xml",
+    "経済": "https://www.nhk.or.jp/rss/news/cat3.xml",
+    "テクノロジー": "https://www.nhk.or.jp/rss/news/cat4.xml",
+    "スポーツ": "https://www.nhk.or.jp/rss/news/cat5.xml",
+    "エンタメ": "https://www.nhk.or.jp/rss/news/cat6.xml",
     "グルメ": "https://news.yahoo.co.jp/rss/topics/food.xml",
     "ゲーム": "https://news.yahoo.co.jp/rss/topics/game.xml",
     "アニメ": "https://news.yahoo.co.jp/rss/topics/anime.xml",
 }
+# ---------------------------------------------
 
 GENRE_CONFIG = {
     "社会": {"bg": "assets/bg_society.png", "color": "#FF2D55", "emoji": "🚨"},
@@ -50,7 +52,6 @@ GENRE_SLUG = {
 # ---------------------------------------------
 
 # --- Phase2.5+: 広告スロット（検索キーワード方式・自動運転） ---
-# 商品固定URLではなく楽天検索結果URL。1週間固定ローテーション。
 AD_SLOTS = {
     "money": {
         "genre": "money",
@@ -78,7 +79,6 @@ AD_SLOTS = {
     },
 }
 
-# 感情→広告ジャンルのマッピング
 EMOTION_TO_AD = {
     "shock": "money",
     "anger": "money",
@@ -98,16 +98,13 @@ def get_ad_config(emotion: str) -> dict:
     ad_genre = EMOTION_TO_AD.get(emotion, "money")
     slot = AD_SLOTS[ad_genre]
 
-    # 1週間固定ローテーション（ISO週番号ベース）
     week_num = datetime.datetime.now().isocalendar()[1]
     keyword_idx = week_num % len(slot["search_keywords"])
     keyword = slot["search_keywords"][keyword_idx]
 
-    # 楽天アフィリエイトID・アプリケーションIDを環境変数から取得
     affiliate_id = os.environ.get("RAKUTEN_AFFILIATE_ID", "")
     app_id = os.environ.get("RAKUTEN_APP_ID", "")
 
-    # 検索URL生成（アフィリエイトID付与）
     base_url = f"https://search.rakuten.co.jp/search/mall/{keyword}/"
     params = []
     if affiliate_id:
@@ -120,7 +117,6 @@ def get_ad_config(emotion: str) -> dict:
     else:
         url = base_url
 
-    # フックはランダム選択（重複回避簡易版）
     hook = random.choice(slot["hooks"])
 
     return {
@@ -336,9 +332,7 @@ def fetch_news(limit=10) -> List[Article]:
     top_articles = articles[:limit]
     random.shuffle(top_articles)
 
-    # --- 連続防止（感情優先 → ジャンル副次） ---
     def _no_consecutive(items, key_func, max_attempts=100):
-        """key_func(item) が同じ値が連続しないように並び替え"""
         result = []
         remaining = items[:]
         attempts = 0
@@ -350,26 +344,16 @@ def fetch_news(limit=10) -> List[Article]:
                     placed = True
                     break
             if not placed:
-                # どうしても連続が避けられない場合はそのまま追加
                 result.append(remaining.pop(0))
             attempts += 1
         return result
 
-    # ① 感情連続防止（最重要）
     top_articles = _no_consecutive(top_articles, lambda a: a.emotion)
-    # ② ジャンル連続防止（副次）
     top_articles = _no_consecutive(top_articles, lambda a: a.genre)
-    # ---------------------------------------------
 
     return top_articles
 
-# --- Phase2+: 個別記事ページ生成 ---
-
 def generate_article_pages(articles: List[Article], timestamp: str) -> List[str]:
-    """
-    個別記事ページを生成。
-    URL: /article/{YYYYMMDD}-{HHMMSS}-{genre}-{seq:03d}.html
-    """
     Path("article").mkdir(exist_ok=True)
     generated = []
     seq_map: Dict[str, int] = {}
@@ -383,7 +367,6 @@ def generate_article_pages(articles: List[Article], timestamp: str) -> List[str]
         genre_en = GENRE_SLUG.get(art.genre, "general")
         filename = f"article/{timestamp}-{genre_en}-{seq:03d}.html"
 
-        # description = hook + title（AI要約禁止）
         description = f"{art.hook}。{art.title}"
         conf = GENRE_CONFIG.get(art.genre, GENRE_CONFIG["一般"])
         now_iso = datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S+09:00")
@@ -400,7 +383,7 @@ def generate_article_pages(articles: List[Article], timestamp: str) -> List[str]
             .replace("{{EMOTION}}", html.escape(art.emotion))
             .replace("{{SCORE}}", str(art.score))
             .replace("{{SOURCE_URL}}", html.escape(art.url))
-            .replace("{{SOURCE_NAME}}", "Yahoo!ニュース")
+            .replace("{{SOURCE_NAME}}", "NHKニュース")
             .replace("{{DATE_PUBLISHED}}", now_iso)
             .replace("{{DATE_MODIFIED}}", now_iso)
             .replace("{{DATE_DISPLAY}}", now_display)
@@ -417,7 +400,6 @@ def generate_article_pages(articles: List[Article], timestamp: str) -> List[str]
 
 
 def cleanup_old_articles(days: int = 90):
-    """90日以上前の article/ を削除"""
     cutoff = datetime.datetime.now() - datetime.timedelta(days=days)
     article_dir = Path("article")
     if not article_dir.exists():
@@ -435,8 +417,6 @@ def cleanup_old_articles(days: int = 90):
     if removed > 0:
         print(f"    -> {removed} old article pages removed (> {days} days)")
 
-# ---------------------------------------------
-
 def build_cards(items: List[dict]) -> str:
     parts = []
     for item in items:
@@ -452,19 +432,15 @@ def build_cards(items: List[dict]) -> str:
         if is_ad:
             ad_btn = f'<a href="{item["url"]}" class="ad-cta" target="_blank" rel="noopener">{item.get("cta", "人気商品を見る →")}</a>'
 
-        # --- Phase2.5+: 広告カード構造 ---
         if is_ad:
-            # 商品画像透過重ね（背景の一部として）
             product_overlay = ''
             if item.get('product_image'):
                 product_overlay = f'<div class="ad-product-overlay"><img src="{item["product_image"]}" alt="" loading="lazy"></div>'
 
-            # 次の記事予告
             next_preview = ''
             if item.get('next_preview'):
                 next_preview = f'<div class="next-preview">次：「{item["next_preview"]}…」</div>'
 
-            # 本文2行（改行重視）
             body_html = ''
             if item.get('body_lines'):
                 body_html = '<div class="ad-body">' + ''.join([f'<p>{line}</p>' for line in item['body_lines']]) + '</div>'
@@ -481,7 +457,6 @@ def build_cards(items: List[dict]) -> str:
                 f'{next_preview}'
                 f'</div>'
             )
-        # ---------------------------------
         elif is_loop:
             card = (
                 f'<div class="card" data-type="loop" style="background-image: url(\'{conf["bg"]}\')">'
@@ -556,17 +531,15 @@ if __name__ == "__main__":
             "url": art.url,
             "score": art.score,
         })
-        # --- Phase2.5+: 広告挿入（感情連動・3件ごと） ---
         if (i + 1) % 3 == 0 and i != len(news_arts) - 1:
             prev_emotion = art.emotion
             ad_conf = get_ad_config(prev_emotion)
 
-            # 次の記事のタイトルを30〜50%だけ予告
             next_idx = i + 1
             next_preview = ""
             if next_idx < len(news_arts):
                 next_title = news_arts[next_idx].title
-                preview_len = max(5, len(next_title) // 3)  # 30〜50%
+                preview_len = max(5, len(next_title) // 3)
                 next_preview = next_title[:preview_len]
 
             final_list.append({
@@ -576,13 +549,11 @@ if __name__ == "__main__":
                 "body_lines": ad_conf["body_lines"],
                 "cta": ad_conf["cta"],
                 "url": ad_conf["url"],
-                "product_image": "",  # 将来: 商品画像パス
+                "product_image": "",
                 "next_preview": next_preview,
             })
             ad_inserted += 1
-        # -------------------------------------------------
 
-    # Phase2+: TOP5ランキングカードを最後に配置（終了演出→継続演出）
     now = datetime.datetime.now()
     next_hour = (now + datetime.timedelta(hours=1)).replace(minute=0, second=0, microsecond=0)
     minutes_until_next = int((next_hour - now).total_seconds() // 60)
@@ -612,13 +583,10 @@ if __name__ == "__main__":
     with open("index.html", "w", encoding="utf-8") as f:
         f.write(html_out)
 
-    # --- Phase2+: 個別記事ページ生成 ---
     print("[4.5/5] 個別記事ページ生成中...")
     timestamp = now.strftime("%Y%m%d-%H%M%S")
     generate_article_pages(news_arts, timestamp)
-    # ---------------------------------------------
 
-    # --- Phase1+: sitemap.xml 自動生成（個別ページURL含む） ---
     print("[5/5] sitemap.xml / robots.txt 生成中...")
     now_iso = now.strftime("%Y-%m-%dT%H:%M:%S+09:00")
 
@@ -659,12 +627,9 @@ if __name__ == "__main__":
     with open("sitemap.xml", "w", encoding="utf-8") as f:
         f.write("\n".join(sitemap_lines))
     print(f"    -> sitemap.xml generated ({len(article_urls)} article URLs)")
-    # ---------------------------------------------
 
-    # --- Phase2+: 古い記事ページを削除（90日保持） ---
     print("[5.5/5] 古い記事ページクリーンアップ...")
     cleanup_old_articles(days=90)
-    # ---------------------------------------------
 
     print("✅ index.html + article pages generated successfully.")
     print(f"   ニュース: {len(news_arts)}件 | 広告: {ad_inserted}件 | TOP5: 5件")
